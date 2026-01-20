@@ -1,20 +1,34 @@
 import express from "express";
 import multer from "multer";
 import fs from "fs";
+import path from "path";
 import OpenAI from "openai";
 
 const app = express();
+
+// Ensure folders exist
+["uploads", "outputs"].forEach(dir => {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir);
+});
+
+// Multer config
 const upload = multer({
   dest: "uploads/",
   limits: { fileSize: 500 * 1024 * 1024 }
 });
 
+// OpenAI
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// In-memory job store
 const jobs = {};
 
-app.use(express.static("public"));
+// Serve index.html
+app.get("/", (req, res) => {
+  res.sendFile(path.join(process.cwd(), "index.html"));
+});
 
-// Upload MP3
+// Upload audio
 app.post("/upload", upload.single("audio"), (req, res) => {
   const jobId = Date.now().toString();
 
@@ -34,8 +48,8 @@ async function processAudio(jobId, audioPath) {
       response_format: "srt"
     });
 
-    const outputPath = `outputs/${jobId}.srt`;
-    fs.writeFileSync(outputPath, transcription);
+    const outFile = `outputs/${jobId}.srt`;
+    fs.writeFileSync(outFile, transcription);
 
     jobs[jobId].status = "done";
     jobs[jobId].file = `/download/${jobId}.srt`;
@@ -53,9 +67,9 @@ app.get("/status/:jobId", (req, res) => {
   res.json(jobs[req.params.jobId] || { status: "unknown" });
 });
 
-// Download SRT
+// Download subtitle
 app.get("/download/:file", (req, res) => {
-  res.download(`outputs/${req.params.file}`);
+  res.download(path.join(process.cwd(), "outputs", req.params.file));
 });
 
 const PORT = process.env.PORT || 3000;
