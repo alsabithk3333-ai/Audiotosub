@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>MP3 to Subtitle Generator</title>
+</head>
+<body>
+
+<h2>Upload Audio (MP3 / WAV ≤ 1 hour)</h2>
+
+<input type="file" id="audio" accept="audio/*" />
+<br><br>
+
+<button onclick="upload()">Generate Subtitles</button>
+
+<p id="status"></p>
+
+<button id="downloadBtn" style="display:none;">Download SRT</button>
+
+<script>
+let jobId = null;
+
+async function upload() {
+  const file = document.getElementById("audio").files[0];
+  if (!file) return alert("Select an audio file");
+
+  const formData = new FormData();
+  formData.append("audio", file);
+
+  document.getElementById("status").innerText = "Uploading & processing...";
+
+  const res = await fetch("/upload", {
+    method: "POST",
+    body: formData
+  });
+
+  const data = await res.json();
+  jobId = data.jobId;
+
+  pollStatus();
+}
+
+function pollStatus() {
+  const interval = setInterval(async () => {
+    const res = await fetch(`/status/${jobId}`);
+    const data = await res.json();
+
+    document.getElementById("status").innerText = "Status: " + data.status;
+
+    if (data.status === "done") {
+      clearInterval(interval);
+      const btn = document.getElementById("downloadBtn");
+      btn.style.display = "block";
+      btn.onclick = () => window.location = data.file;
+    }
+
+    if (data.status === "error") {
+      clearInterval(interval);
+      document.getElementById("status").innerText = "Error occurred";
+    }
+  }, 5000);
+}
+</script>
+
+</body>
+</html>
