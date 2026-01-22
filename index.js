@@ -5,72 +5,80 @@ import path from "path";
 import OpenAI from "openai";
 
 const app = express();
+const PORT = process.env.PORT || 10000;
 
 // Ensure folders exist
-["uploads", "outputs"].forEach(dir => {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir);
+fs.mkdirSync("uploads", { recursive: true });
+fs.mkdirSync("outputs", { recursive: true });
+
+// Multer setup
+const upload = multer({ dest: "uploads/" });
+
+// OpenAI client (GPT-4o Audio)
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  timeout: 15 * 60 * 1000 // 15 minutes for long audio
 });
 
-// Multer config
-const upload = multer({
-  dest: "uploads/",
-  limits: { fileSize: 500 * 1024 * 1024 }
-});
-
-// OpenAI
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-// In-memory job store
-const jobs = {};
-
-// Serve index.html
+// Serve frontend
 app.get("/", (req, res) => {
   res.sendFile(path.join(process.cwd(), "index.html"));
 });
 
-// Upload audio
-app.post("/upload", upload.single("audio"), (req, res) => {
-  const jobId = Date.now().toString();
-
-  jobs[jobId] = { status: "processing" };
-
-  processAudio(jobId, req.file.path);
-
-  res.json({ jobId });
-});
-
-// Background processing
-async function processAudio(jobId, audioPath) {
+// Upload & process audio
+app.post("/upload", upload.single("audio"), async (req, res) => {
   try {
-    const transcription = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(audioPath),
-      model: "whisper-1",
-      response_format: "srt"
+    const audioPath = req.file.path;
+    const audioBuffer = fs.readFileSync(audioPath);
+
+    console.log("Audio received, starting transcription...");
+
+    const response = await openai.responses.create({
+      model: "gpt-4o-audio-preview",
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: "Transcribe this audio clearly as subtitles." },
+            {
+              type: "input_audio",
+              audio: audioBuffer,
+              format: "mp3"
+            }
+          ]
+        }
+      ]
     });
 
-    const outFile = `outputs/${jobId}.srt`;
-    fs.writeFileSync(outFile, transcription);
+    const transcriptText = response.output_text;
 
-    jobs[jobId].status = "done";
-    jobs[jobId].file = `/download/${jobId}.srt`;
+    // Save transcript
+    const outputFile = `outputs/${req.file.filename}.txt`;
+    fs.writeFileSync(outputFile, transcriptText);
 
+    // Cleanup upload
     fs.unlinkSync(audioPath);
+
+    res.json({
+      success: true,
+      text: transcriptText,
+      download: `/${outputFile}`
+    });
 
   } catch (err) {
     console.error(err);
-    jobs[jobId].status = "error";
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
   }
-}
-
-// Job status
-app.get("/status/:jobId", (req, res) => {
-  res.json(jobs[req.params.jobId] || { status: "unknown" });
 });
 
-// Download subtitle
-app.get("/download/:file", (req, res) => {
-  res.download(path.join(process.cwd(), "outputs", req.params.file));
+// Download result
+app.get("/outputs/:file", (req, res) => {
+  res.download(path.join("outputs", req.params.file));
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("Server running on port", PORT));
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
